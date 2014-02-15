@@ -32,13 +32,14 @@ class MongoQueue(object):
     """A queue class
     """
 
-    def __init__(self, collection, consumer_id, timeout=300, max_attempts=3):
+    def __init__(self, collection, consumer_id, timeout=300, max_attempts=3, category=""):
         """
         """
         self.collection = collection
         self.consumer_id = consumer_id
         self.timeout = timeout
         self.max_attempts = max_attempts
+        self.category = category
 
     def close(self):
         """Close the in memory queue connection.
@@ -62,6 +63,7 @@ class MongoQueue(object):
         """
         self.collection.find_and_modify(
             query={
+                "category": self.category,
                 "locked_by": {"$ne": None},
                 "locked_at": {
                     "$lt": datetime.now() - timedelta(self.timeout)}},
@@ -74,13 +76,15 @@ class MongoQueue(object):
         """Place a job into the queue
         """
         job = dict(DEFAULT_INSERT)
+        job["category"] = self.category
         job['priority'] = priority
         job['payload'] = payload
         return self.collection.insert(job)
 
     def next(self):
         return self._wrap_one(self.collection.find_and_modify(
-            query={"locked_by": None,
+            query={"category": self.category,
+                   "locked_by": None,
                    "locked_at": None,
                    "attempts": {"$lt": self.max_attempts}},
             update={"$set": {"attempts": 1,
@@ -93,7 +97,8 @@ class MongoQueue(object):
 
     def _jobs(self):
         return self.collection.find(
-            query={"locked_by": None,
+            query={"category": self.category,
+                   "locked_by": None,
                    "locked_at": None,
                    "attempts": {"$lt": self.max_attempts}},
             sort=[('priority', pymongo.DESCENDING)],
@@ -154,14 +159,14 @@ class Job(object):
         """Job has been completed.
         """
         return self._queue.collection.find_and_modify(
-            {"_id": self.job_id, "locked_by": self._queue.consumer_id},
+            {"_id": self.job_id, "category": self._data["category"], "locked_by": self._queue.consumer_id},
             remove=True)
 
     def error(self, message=None):
         """Note an error processing a job, and return it to the queue.
         """
         self._queue.collection.find_and_modify(
-            {"_id": self.job_id, "locked_by": self._queue.consumer_id},
+            {"_id": self.job_id, "category": self._data["category"], "locked_by": self._queue.consumer_id},
             update={"$set": {
                 "locked_by": None, "locked_at": None, "last_error": message},
                 "$inc": {"attempts": 1}})
@@ -170,14 +175,14 @@ class Job(object):
         """Note progress on a long running task.
         """
         return self._queue.collection.find_and_modify(
-            {"_id": self.job_id, "locked_by": self._queue.consumer_id},
+            {"_id": self.job_id, "category": self._data["category"], "locked_by": self._queue.consumer_id},
             update={"$set": {"progress": count, "locked_at": datetime.now()}})
 
     def release(self):
         """Put the job back into_queue.
         """
         return self._queue.collection.find_and_modify(
-            {"_id": self.job_id, "locked_by": self._queue.consumer_id},
+            {"_id": self.job_id, "category": self._data["category"], "locked_by": self._queue.consumer_id},
             update={"$set": {"locked_by": None, "locked_at": None},
                     "$inc": {"attempts": 1}})
 
