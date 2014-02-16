@@ -46,24 +46,31 @@ class MongoQueue(object):
         """
         self.collection.connection.close()
 
-    def clear(self):
+    def clear(self, category=None):
         """Clear the queue.
         """
-        return self.collection.drop()
+        if category:
+            #Clear only category queue
+            pass
+        else:
+            return self.collection.drop()
 
     def size(self):
         """Total size of the queue
         """
         return self.collection.count()
 
-    def repair(self):
+    def repair(self, category=None):
         """Clear out stale locks.
 
         Increments per job attempt counter.
         """
+
+        if not category:
+            category = self.category
         self.collection.find_and_modify(
             query={
-                "category": self.category,
+                "category": category,
                 "locked_by": {"$ne": None},
                 "locked_at": {
                     "$lt": datetime.now() - timedelta(self.timeout)}},
@@ -72,18 +79,22 @@ class MongoQueue(object):
                 "$inc": {"attempts": 1}}
         )
 
-    def put(self, payload, priority=0):
+    def put(self, payload, priority=0, category=None):
         """Place a job into the queue
         """
         job = dict(DEFAULT_INSERT)
-        job["category"] = self.category
+        if not category:
+            category = self.category
+        job["category"] = category
         job['priority'] = priority
         job['payload'] = payload
         return self.collection.insert(job)
 
-    def next(self):
+    def next(self, category=None):
+        if not category:
+            category = self.category
         return self._wrap_one(self.collection.find_and_modify(
-            query={"category": self.category,
+            query={"category": category,
                    "locked_by": None,
                    "locked_at": None,
                    "attempts": {"$lt": self.max_attempts}},
@@ -95,9 +106,12 @@ class MongoQueue(object):
             limit=1
         ))
 
-    def _jobs(self):
+    def _jobs(self, category=None):
+        if not category:
+            category = self.category
+
         return self.collection.find(
-            query={"category": self.category,
+            query={"category": category,
                    "locked_by": None,
                    "locked_at": None,
                    "attempts": {"$lt": self.max_attempts}},
@@ -155,11 +169,13 @@ class Job(object):
 
     ## Job Control
 
-    def complete(self):
+    def complete(self, category=None):
         """Job has been completed.
         """
+        if not category:
+            category = self._data["category"]
         return self._queue.collection.find_and_modify(
-            {"_id": self.job_id, "category": self._data["category"], "locked_by": self._queue.consumer_id},
+            {"_id": self.job_id, "category": category, "locked_by": self._queue.consumer_id},
             remove=True)
 
     def error(self, message=None):
